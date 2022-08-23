@@ -112,8 +112,6 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.post("/youtube/download", response_model=STATUSSendPayload)
 async def download(data: INITRecievePayload):
     # check if its already download(ing|ed)
-    # may be youtube_download returns model ?
-    # instead of nested tuple
     # if data.url in manager.youtube_tasks:
     #     status = manager.youtube_tasks[data.url].status
     #     if status and status.percentage == 100:
@@ -126,7 +124,7 @@ async def download(data: INITRecievePayload):
     WebsocketSendPayload(
         op="STATUS", data=STATUSSendPayload(url=data.url, state="STARTED")
     )
-    id, title, file_name = await youtube_download(payload.data.url)
+    await youtube_download(payload.data.url)
     # in parralel thread (download actually done in background)
     # but we simulate it here
     WebsocketSendPayload(
@@ -152,14 +150,14 @@ async def download(data: INITRecievePayload):
 async def test_run_save(mode: SlowedReverbProcessMode, title: str, file_name: str):
     # only require yt.id not file-name with title wtf
     board_name = (EQProcessMode.SlowedReverb, mode)
-    eq = Equalizer.read_file(file_name)
+    eq = Equalizer.read_file(file_name=file_name)
     await eq.run(board_name=board_name)
-    await eq.write_file(title, board_name)
+    await eq.write_file(title=title, board_name=board_name)
     return {"upload_ready": True, "title": title}
 
 
 @app.post("/youtube/upload")
 async def upload(mode: SlowedReverbProcessMode, title: str):
     board_name = (EQProcessMode.SlowedReverb, mode)
-    link = await upload_local(file_name=title, board_name=board_name)
+    link = await upload_local(title=title, board_name=board_name)
     return {"link": link, "success": True}

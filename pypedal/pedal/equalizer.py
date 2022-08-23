@@ -15,6 +15,7 @@ from pedalboard import Delay, LowpassFilter, Pedalboard, PitchShift, Reverb, Res
 from pedalboard.io import ReadableAudioFile, WriteableAudioFile
 
 from .modes import EQProcessMode, ResampleProcessMode, SlowedReverbProcessMode, EQTYPES
+from .models import PartialYoutubeVideo, YoutubeVideo
 
 if TYPE_CHECKING:
     from numpy import ndarray, dtype, float32
@@ -104,16 +105,24 @@ class Equalizer:
     @classmethod
     def read_file(
         cls,
-        filename: str,
+        video: PartialYoutubeVideo | None = None,
         *,
+        file_name: str | None = None,
         extension: str = "mp3",
         path: str | None = None,
     ):
         if not path:
             path = options.FOLDER
+        if not video:
+            if not file_name:
+                raise Exception("file_name is required")
+        else:
+            file_name = video.file_name
+            extension = video.ext
+
         # TODO: async-method
-        log.info(f"reading {filename=} {extension=}")
-        file = ReadableAudioFile(f"{path}/{filename}.{extension}")
+        log.info(f"reading {file_name=} {extension=}")
+        file = ReadableAudioFile(f"{path}/{file_name}.{extension}")
         with file as f:
             audio = f.read(f.frames)
             samplerate = f.samplerate
@@ -126,22 +135,36 @@ class Equalizer:
 
     def write_file(
         self,
-        filename: str,
+        video: PartialYoutubeVideo | None = None,
         board_name: BoardType = (
             EQProcessMode.SlowedReverb,
             SlowedReverbProcessMode.Mid,
         ),
         *,
+        title: str | None = None,
         extension: str = "mp3",
         path: str | None = None,
     ):
-        def wrapper(filename: str, board_name, extension: str, path: str | None):
+        def wrapper(
+            video: PartialYoutubeVideo | None,
+            board_name: BoardType,
+            title: str | None,
+            extension: str,
+            path: str | None,
+        ):
             if not path:
                 path = options.PROCESSED_FOLDER
             if self.done is None:
                 raise Exception("please run first")
 
-            title = f"{filename}-{board_name[1]}"
+            if not video:
+                if not title:
+                    raise Exception("title is required")
+            else:
+                title = video.title
+                extension = video.ext
+
+            title = f"{title}-{board_name[1]}"
             assert isinstance(self.samplerate, float)
             file = pathlib.Path(f"{path}/{title}.{extension}")
             file.parent.mkdir(parents=True, exist_ok=True)
@@ -155,27 +178,25 @@ class Equalizer:
             return title
 
         return asyncio.get_event_loop().run_in_executor(
-            None, wrapper, filename, board_name, extension, path
+            None, wrapper, video, board_name, title, extension, path
         )
 
     async def save_local(
         self,
-        file_name: str,
+        video: PartialYoutubeVideo,
         board_name: BoardType,
         *,
         number_of_tries: int = 4,
-        extension: str = "wav",
     ):
-        # idk we using wav extension ?
-        # TODO
+
         for tries in range(number_of_tries):
-            log.info(f"saving {file_name=} {board_name=} {tries=}")
+            log.info(f"saving {video=} {board_name=} {tries=}")
             # Write the audio back as a wav file:
             try:
-                return await self.write_file(file_name, board_name, extension=extension)
+                return await self.write_file(video, board_name)
             except Exception as e:
                 if "Unable to open" in str(e):
-                    log.critical(f"Close the {file_name} for write operation")
+                    log.critical(f"Close the {video}= for write operation")
                 log.info(e)
                 traceback.print_exc()
                 await asyncio.sleep(5)
@@ -229,7 +250,7 @@ def youtube_download(url: str, *, title_suffix: str = ""):
     # returns chunk of progress...
     """
     title suffix added for multi_process support \n
-    returns id, title, file_name
+    returns YoutubeVideo
     """
 
     def wrapper(url: str, title_suffix: str):
@@ -260,7 +281,8 @@ def youtube_download(url: str, *, title_suffix: str = ""):
             while tries < 3:
                 tries += 1
                 try:
-                    out = ydl.extract_info(url)
+                    info = ydl.extract_info(url)
+                    out = YoutubeVideo(**info)  # type: ignore
                 except (youtube_dl.DownloadError, PermissionError) as e:
                     if "unable to rename file" in str(e) or isinstance(
                         e, PermissionError
@@ -278,19 +300,15 @@ def youtube_download(url: str, *, title_suffix: str = ""):
                 # tries done, no out
                 raise YoutubeDLError("Unable to download")
 
-            assert isinstance(out, dict)
-            id = out["id"]
-            assert id == video_id
+            assert out.id == video_id
 
-            # remove prefix from out-template cus
-            # we need safely-generated filename from ydl
-            path = pathlib.Path(str(ydl.prepare_filename(out)))
-            file = path.name  # without options.FOLDER
-            file_name, extension = file.rsplit(".", 1)  # remove file_name.extension
-            title = file_name.split(f"-{out['id']}", 1)[0]  # file_name = title-id
+            # we need safely-generated filename from ydl for filesystem
+            path = pathlib.Path(str(ydl.prepare_filename(info)))
+            file = path.name
+            file_name, _extension = file.rsplit(".", 1)
+            out.file_name = file_name  # safe filename from ydl
 
-        # return str(out.get("title")), f"{out.get('title')}-{out.get('id')}"
-        return video_id, title, file_name
+        return out
 
     loop = asyncio.get_event_loop()
     return loop.run_in_executor(None, wrapper, url, title_suffix)
@@ -328,22 +346,26 @@ def upload_to_transferfilesh(file: pathlib.Path, /, *, clipboard: bool = False):
 
 
 def upload_local(
+    video: PartialYoutubeVideo | None = None,
     *,
-    full_qualified_name: pathlib.Path | None = None,
-    file_name: str | None = None,
-    board_name: BoardType | None = None,
+    title: str | None = None,
+    board_name: BoardType,
     extension: str = "mp3",
     copy_to_clipboard: bool = False,  # debug purposes, remove later,
-    delete_after=None,  # datetime for when to delete file, especially for pytest
+    delete_after=None,  # TODO: datetime for when to delete file, especially for pytest
 ):
-    if not full_qualified_name:
-        if not (file_name and board_name and extension):
+    if video:
+        title = video.title
+        extension = video.ext
+    else:
+        if not (title and extension):
             raise Exception(
                 "cannot make full_qualified_name for given inputs to upload"
             )
-        full_qualified_name = pathlib.Path(
-            f"./{options.PROCESSED_FOLDER}/{file_name}-{board_name[1]}.{extension}"
-        )
+
+    full_qualified_name = pathlib.Path(
+        f"./{options.PROCESSED_FOLDER}/{title}-{board_name[1]}.{extension}"
+    )
 
     return upload_to_transferfilesh(full_qualified_name, clipboard=copy_to_clipboard)
 
@@ -355,9 +377,9 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     UPLOAD_FILE = False
     YOUTUBE_LINK = ""
-    TITLE, FILE_NAME = (
-        "die_for_you",
-        "Die For You ft. Grabbitz _ Official Music Video _ VALORANT Champions 2021-h7MYJghRWt0",
+    ID, TITLE = (
+        "h7MYJghRWt0",
+        "Die For You ft. Grabbitz _ Official Music Video _ VALORANT Champions 2021",
     )
 
     if len(sys.argv) > 1:
@@ -367,9 +389,9 @@ if __name__ == "__main__":
         YOUTUBE_LINK = str(sys.argv[1])
 
     if YOUTUBE_LINK:
-        id, title, file_name = loop.run_until_complete(youtube_download(YOUTUBE_LINK))
+        video = loop.run_until_complete(youtube_download(YOUTUBE_LINK))
     else:
-        title, file_name = TITLE, FILE_NAME
+        video = PartialYoutubeVideo(id=ID, title=TITLE)
 
     eq_range: Dict[int, BoardType] = {
         # 0: (EQProcessMode.SlowedReverb, "45_08"),
@@ -377,11 +399,9 @@ if __name__ == "__main__":
         # 2: (EQProcessMode.SlowedReverb, "55_08"),
     }
 
-    eq = Equalizer.read_file(file_name)
+    eq = Equalizer.read_file(video)
     for idx, board_name in eq_range.items():
         loop.run_until_complete(eq.run(board_name=board_name, run_once=False))
-        loop.run_until_complete(eq.save_local(title, board_name))
+        loop.run_until_complete(eq.save_local(video, board_name))
         if UPLOAD_FILE:
-            loop.run_until_complete(
-                upload_local(file_name=title, board_name=board_name, extension="wav")
-            )
+            loop.run_until_complete(upload_local(video, board_name=board_name))

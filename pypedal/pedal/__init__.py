@@ -1,4 +1,5 @@
 from .modes import *
+from .models import *
 from .equalizer import (
     AudioType,
     Options,
