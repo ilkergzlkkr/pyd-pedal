@@ -1,7 +1,7 @@
 from .modes import *
 from .models import *
 from .equalizer import (
-    AudioType,
+    BoardType,
     Options,
     Equalizer,
     YoutubeDLError,
@@ -9,8 +9,12 @@ from .equalizer import (
     upload_to_transferfilesh,
     parse_youtube_id,
     youtube_download,
-    setup,
     options,
     YoutubeIdRegex,
     YoutubeUrlRegex,
 )
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .equalizer import AudioType

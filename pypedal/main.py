@@ -20,7 +20,7 @@ colouredlogs.install(stream=sys.stdout, reconfigure=False)
 
 @app.on_event("startup")
 async def setup():
-    options.__init__()
+    options.__init__(os.getenv("TEMP_DIR", ""))
     with open("logging.yml", "rt") as f:
         config = yaml.safe_load(f.read())
 

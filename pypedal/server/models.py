@@ -1,22 +1,36 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Generic, Literal, Any, Dict, Optional, TypeVar, Union
+import dataclasses
+from typing import (
+    Generic,
+    List,
+    Literal,
+    Any,
+    Dict,
+    Optional,
+    TypeVar,
+)
+
+from fastapi import WebSocket
+from pydantic import BaseModel, validator, root_validator
 
 from pypedal import pedal
-from pydantic import BaseModel, validator, root_validator
+from pypedal.pedal import PartialYoutubeVideo, YoutubeVideo
 
 
 class EQStatus(BaseModel):
+    # TODO: change name to EQProgress
     stage: Literal["downloading", "processing", "uploading"]
     percentage: Optional[int] = None
     # percentage is not supported currently
 
 
 # client sends this to server
-class RecievePayload(BaseModel):
+class RecievePayload(BaseModel, Generic[pedal.EQTYPES]):
     # youtube regex
     url: str
+    board_name: pedal.BoardType[pedal.EQTYPES]
 
     @validator("url", allow_reuse=True)
     def validate_url(cls, v):
@@ -26,15 +40,15 @@ class RecievePayload(BaseModel):
         return id
 
 
-class INITRecievePayload(RecievePayload):
+class INITRecievePayload(RecievePayload, Generic[pedal.EQTYPES]):
     pass
 
 
-class STATUSRecievePayload(RecievePayload):
+class STATUSRecievePayload(RecievePayload, Generic[pedal.EQTYPES]):
     pass
 
 
-class CANCELRecievePayload(RecievePayload):
+class CANCELRecievePayload(RecievePayload, Generic[pedal.EQTYPES]):
     pass
 
 
@@ -44,15 +58,20 @@ TypeRecieve = TypeVar(
 
 # server sends this to client
 class SendPayload(BaseModel):
-    url: Optional[str] = None
+    pass
 
 
 class STATUSSendPayload(SendPayload):
-    # state: Literal["STARTED", "IN_PROGRESS","CANCELLED", "FAILED", "DONE"]
+    url: str
+    board_name: pedal.BoardType
     state: Literal["STARTED", "IN_PROGRESS", "DONE"]
     cancelled: bool = False
     failed: bool = False
+    result: Optional[str] = None
     status: Optional[EQStatus] = None
+
+    # TODO: ValueError if no result is set
+    # if not cancelled and not failed
 
     @root_validator
     def check_failed_or_cancelled(cls, values):
@@ -64,7 +83,7 @@ class STATUSSendPayload(SendPayload):
 
     @root_validator
     def check_status_if_in_progress(cls, values: Dict[str, Any]):
-        if values["state"] == "IN_PROGRESS":
+        if values.get("state") == "IN_PROGRESS":
             if values["status"] is None:
                 raise ValueError(
                     "'status' value cannot be None if state == IN_PROGRESS"
@@ -127,6 +146,34 @@ class WebsocketSendPayload(BaseModel, Generic[TypeSend]):
     data: TypeSend
 
 
-# class ProcessModel(BaseModel):
-#     lock: asyncio.Lock = asyncio.Lock()
-#     status_payload: Optional[STATUSSendPayload] = None
+T = TypeVar("T")
+
+
+@dataclasses.dataclass
+class FutureLinkedEvent(Generic[T]):
+    future: asyncio.Future[T]
+    event: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
+
+    def __post_init__(self):
+        self.future.add_done_callback(lambda result: self.event.set())
+
+
+@dataclasses.dataclass
+class SubProcessModel:
+    ws: List[WebSocket]
+    # status_payload: STATUSSendPayload
+    processing: FutureLinkedEvent[Any] | None = None
+    uploading: FutureLinkedEvent[str] | None = None
+    background_task: asyncio.Task | None = None
+    lock: asyncio.Lock = dataclasses.field(default_factory=asyncio.Lock)
+
+
+@dataclasses.dataclass
+class ProcessModel(Generic[pedal.EQTYPES]):
+    url: str
+    sub: Dict[pedal.BoardType[pedal.EQTYPES], SubProcessModel] = dataclasses.field(
+        default_factory=dict
+    )
+    video: Optional[PartialYoutubeVideo] = None
+    downloading: FutureLinkedEvent[YoutubeVideo] | None = None
+    background_task: asyncio.Task | None = None

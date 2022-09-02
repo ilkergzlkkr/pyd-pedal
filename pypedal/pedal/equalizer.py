@@ -7,46 +7,61 @@ import pathlib
 import re
 import time
 import traceback
-from typing import TYPE_CHECKING, Any, Mapping, Tuple, TypeVar
+import typer
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    Any,
+    Optional,
+    Tuple,
+)
 
 import youtube_dl
 import requests
-from pedalboard import Delay, LowpassFilter, Pedalboard, PitchShift, Reverb, Resample  # type: ignore
+
+from pysndfx import AudioEffectsChain
+
 from pedalboard.io import ReadableAudioFile, WriteableAudioFile
 
-from .modes import EQProcessMode, ResampleProcessMode, SlowedReverbProcessMode, EQTYPES
-from .models import PartialYoutubeVideo, YoutubeVideo
+from pypedal import __file__ as pypedal_path
+from pypedal.pedal.modes import (
+    EQProcessMode,
+    ResampleProcessMode,
+    SlowedReverbProcessMode,
+    EQTYPES,
+    get_board,
+)
+from pypedal.pedal.models import PartialYoutubeVideo, YoutubeVideo
 
 if TYPE_CHECKING:
     from numpy import ndarray, dtype, float32
 
-log = logging.getLogger(__name__)
+    AudioType = ndarray[Any, dtype[float32]]
+
+if __name__ == "__main__":
+    log = logging.getLogger("equalizer")
+else:
+    log = logging.getLogger(__name__)
 
 
 class Options:
-    def __init__(self, f: str = "assets") -> None:
-        self.FOLDER = f
-        self.PROCESSED_FOLDER = f"{f}/processed"
+    def __init__(self, f: str | pathlib.Path = "") -> None:
+        if not f:
+            f = pathlib.Path(pypedal_path).resolve().parent
+            # lib path
+            f = f.parent / "temp" / "assets"
+            # projects temp path
+
+        self.FOLDER = pathlib.Path(f)
+        self.PROCESSED_FOLDER = pathlib.Path(f) / "processed"
+        log.info(f"Using {self.FOLDER!r} as temp path")
 
 
 options = Options()
-
-
-def setup():
-    # TODO: deprecate this
-    # no need to setup
-    os.makedirs(options.FOLDER, exist_ok=True)
-    os.makedirs(options.PROCESSED_FOLDER, exist_ok=True)
-
-
-if __name__ == "__main__":
-    setup()
-
 YoutubeUrlRegex = re.compile(
     r"""(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/ ]{11})"""
 )
 YoutubeIdRegex = re.compile(r"""([^"&?\/ ]{11})""")
-AudioType = TypeVar("AudioType", bound="ndarray[Any, dtype[float32]]")
 BoardType = Tuple[EQProcessMode, EQTYPES]
 
 
@@ -55,52 +70,22 @@ class YoutubeDLError(Exception):
 
 
 class Equalizer:
-    boards: Mapping[
-        EQProcessMode, Mapping[SlowedReverbProcessMode | ResampleProcessMode, Any]
-    ] = {
-        EQProcessMode.Resample: {
-            ResampleProcessMode.Down: Pedalboard([Resample(target_sample_rate=4000)]),
-            ResampleProcessMode.Up: Pedalboard([Resample(target_sample_rate=16000)]),
-        },
-        EQProcessMode.SlowedReverb: {
-            SlowedReverbProcessMode.Low: Pedalboard(
-                [
-                    Delay(delay_seconds=0.25, mix=1.0),
-                    PitchShift(semitones=-3.5),
-                    Reverb(width=0.8),
-                ]
-            ),
-            SlowedReverbProcessMode.Mid: Pedalboard(
-                [
-                    Delay(delay_seconds=0.25, mix=1.0),
-                    PitchShift(semitones=-4.5),
-                    Reverb(width=0.8),
-                ]
-            ),
-            SlowedReverbProcessMode.High: Pedalboard(
-                [
-                    Delay(delay_seconds=0.25, mix=1.0),
-                    PitchShift(semitones=-5.5),
-                    Reverb(width=0.8),
-                ]
-            ),
-        },
-    }
-
     def __init__(
         self,
         *,
         # file: AudioFile | None = None,
+        video: PartialYoutubeVideo | None = None,
         audio: "AudioType | None" = None,
         samplerate: float | None = None,
-        done: "AudioType | None" = None,
+        done: Dict[BoardType, "AudioType"] | None = None,  # classvar ? (global cache)
     ):
         # self.file = file
+        self.video = video
 
         self.audio = audio
         self.samplerate = samplerate
 
-        self.done = done
+        self.done = done or {}
 
     @classmethod
     def read_file(
@@ -109,7 +94,7 @@ class Equalizer:
         *,
         file_name: str | None = None,
         extension: str = "mp3",
-        path: str | None = None,
+        path: pathlib.Path | None = None,
     ):
         if not path:
             path = options.FOLDER
@@ -121,14 +106,16 @@ class Equalizer:
             extension = video.ext
 
         # TODO: async-method
+        # The duration in seconds 10 == frames(441_000) / samplerate(44,100hz)
         log.info(f"reading {file_name=} {extension=}")
         file = ReadableAudioFile(f"{path}/{file_name}.{extension}")
         with file as f:
-            audio = f.read(f.frames)
+            audio = f.read_raw(f.frames * 2)
             samplerate = f.samplerate
 
         return cls(
             # file=file,
+            video=video,
             audio=audio,
             samplerate=samplerate,
         )
@@ -136,46 +123,47 @@ class Equalizer:
     def write_file(
         self,
         video: PartialYoutubeVideo | None = None,
-        board_name: BoardType = (
+        board_name: BoardType[EQTYPES] = (
             EQProcessMode.SlowedReverb,
             SlowedReverbProcessMode.Mid,
         ),
         *,
         title: str | None = None,
         extension: str = "mp3",
-        path: str | None = None,
+        path: pathlib.Path | None = None,
     ):
         def wrapper(
             video: PartialYoutubeVideo | None,
-            board_name: BoardType,
+            board_name: BoardType[EQTYPES],
             title: str | None,
             extension: str,
-            path: str | None,
+            path: pathlib.Path | None,
         ):
             if not path:
                 path = options.PROCESSED_FOLDER
-            if self.done is None:
-                raise Exception("please run first")
 
             if not video:
                 if not title:
                     raise Exception("title is required")
             else:
-                title = video.title
+                title = video.safe_title
                 extension = video.ext
 
-            title = f"{title}-{board_name[1]}"
+            file_name = f"{title}-{board_name[1]}"
+            if (audio := self.done.get(board_name)) is None:
+                raise Exception("please run first")
+
             assert isinstance(self.samplerate, float)
-            file = pathlib.Path(f"{path}/{title}.{extension}")
+            file = path / f"{file_name}.{extension}"
             file.parent.mkdir(parents=True, exist_ok=True)
             with WriteableAudioFile(
                 str(file),
                 self.samplerate,
-                self.done.shape[0],
+                audio.shape[0],
             ) as f:
-                f.write(self.done)
+                f.write(audio)
 
-            return title
+            return file_name
 
         return asyncio.get_event_loop().run_in_executor(
             None, wrapper, video, board_name, title, extension, path
@@ -184,7 +172,7 @@ class Equalizer:
     async def save_local(
         self,
         video: PartialYoutubeVideo,
-        board_name: BoardType,
+        board_name: BoardType[EQTYPES],
         *,
         number_of_tries: int = 4,
     ):
@@ -204,36 +192,54 @@ class Equalizer:
     def run(
         self,
         *,
-        board_name: BoardType = (
+        board_name: BoardType[EQTYPES] = (
             EQProcessMode.SlowedReverb,
             SlowedReverbProcessMode.Mid,
         ),
         run_once: bool = True,
+        args: tuple | None = None,
     ):
-        """
-        set run_once to False to run the equalizer with multiple boards
-        """
+        def wrapper(
+            video: PartialYoutubeVideo | None,
+            board_name: BoardType[EQTYPES],
+            run_once: bool,
+            args: tuple | None,
+        ):
+            done_before = self.done.get(board_name)
+            if not done_before and video is not None:
+                file = (
+                    options.PROCESSED_FOLDER
+                    / f"{video.safe_title}-{board_name[1]}.{video.ext}"
+                )
+                if file.exists():
+                    log.info(f"{file} exists, setting done_before")
+                    with ReadableAudioFile(str(file)) as f:
+                        self.done[board_name] = done_before = f.read(f.frames)
 
-        def wrapper(board_name: BoardType, run_once: bool):
-            if self.done is not None and run_once:
-                return self.done
+            if done_before is not None and run_once:
+                return done_before
+                # TODO: skip writing afterwards
 
-            if self.audio is not None and self.samplerate is not None:
-                board = self.boards.get(EQProcessMode(board_name[0]))
-                if board is None:
-                    raise Exception("Board not found")
-                board = board.get(board_name[1])
-                if board is None:
-                    raise Exception("Board not found")
+            if self.audio is None or self.samplerate is None:
+                raise Exception("please run first")
 
-                log.info(f"proccessing with {board_name=}")
-                self.done = board(self.audio, self.samplerate)
-                return self.done
+            board = get_board(board_name[0], board_name[1])
+            if board is None:
+                raise Exception("Board not found")
 
-            raise Exception("No file to process")
+            log.info(f"proccessing with {board_name=}")
+            if isinstance(board, AudioEffectsChain):
+                self.done[board_name] = board(self.audio)  # type: ignore
+
+            else:
+                self.done[board_name] = board(self.audio, self.samplerate)
+
+            return self.done[board_name]
 
         loop = asyncio.get_event_loop()
-        return loop.run_in_executor(None, wrapper, board_name, run_once)
+        return loop.run_in_executor(
+            None, wrapper, self.video, board_name, run_once, args
+        )
 
 
 def parse_youtube_id(url: str):
@@ -307,6 +313,9 @@ def youtube_download(url: str, *, title_suffix: str = ""):
             file = path.name
             file_name, _extension = file.rsplit(".", 1)
             out.file_name = file_name  # safe filename from ydl
+            out.safe_title = file_name.rsplit("-", 1)[0]
+            out.ext = ydl_opts["postprocessors"][0]["preferredcodec"]
+            # ydl gives us "webm", "m4a" ext from info for some reason :/
 
         return out
 
@@ -349,13 +358,13 @@ def upload_local(
     video: PartialYoutubeVideo | None = None,
     *,
     title: str | None = None,
-    board_name: BoardType,
+    board_name: BoardType[EQTYPES],
     extension: str = "mp3",
     copy_to_clipboard: bool = False,  # debug purposes, remove later,
     delete_after=None,  # TODO: datetime for when to delete file, especially for pytest
 ):
     if video:
-        title = video.title
+        title = video.safe_title
         extension = video.ext
     else:
         if not (title and extension):
@@ -370,38 +379,109 @@ def upload_local(
     return upload_to_transferfilesh(full_qualified_name, clipboard=copy_to_clipboard)
 
 
-if __name__ == "__main__":
-    import sys
-    from typing import Dict
+app = typer.Typer()
+
+
+@app.command()
+def resample(
+    youtube_link: Optional[str] = typer.Argument(
+        None, help="youtube link, optional if you have already downloaded"
+    ),
+    video_id: Optional[str] = typer.Option(
+        None, help="local video id if youtube_link is None (video downloaded before)"
+    ),
+    title: Optional[str] = None,
+    mode_level: ResampleProcessMode = ResampleProcessMode.Down,
+    run_once: bool = True,
+    upload: bool = False,
+):
+    import colouredlogs
+
+    colouredlogs.install(logging.DEBUG, reconfigure=False)
 
     loop = asyncio.get_event_loop()
-    UPLOAD_FILE = False
-    YOUTUBE_LINK = ""
+    UPLOAD_FILE = upload
+    YOUTUBE_LINK = youtube_link or ""
     ID, TITLE = (
-        "h7MYJghRWt0",
-        "Die For You ft. Grabbitz _ Official Music Video _ VALORANT Champions 2021",
+        video_id or "bCxtVoZJV2I",
+        title or "Jakuzi - 'Sana Göre Bir Şey Yok' (Official Audio)",
     )
 
-    if len(sys.argv) > 1:
-        if len(sys.argv) > 2:
-            # arg 3 -> save
-            UPLOAD_FILE = True
-        YOUTUBE_LINK = str(sys.argv[1])
+    if not YOUTUBE_LINK:
+        if not ID:
+            raise RuntimeError("no youtube link or video id")
 
     if YOUTUBE_LINK:
         video = loop.run_until_complete(youtube_download(YOUTUBE_LINK))
     else:
         video = PartialYoutubeVideo(id=ID, title=TITLE)
 
-    eq_range: Dict[int, BoardType] = {
-        # 0: (EQProcessMode.SlowedReverb, "45_08"),
-        1: (EQProcessMode.SlowedReverb, "35_08"),
-        # 2: (EQProcessMode.SlowedReverb, "55_08"),
-    }
+    board_name = EQProcessMode.Resample, mode_level
+
+    eq = Equalizer.read_file(video)
+    loop.run_until_complete(eq.run(board_name=board_name, run_once=run_once))
+    loop.run_until_complete(eq.save_local(video, board_name))
+    if UPLOAD_FILE:
+        loop.run_until_complete(
+            upload_local(video, board_name=board_name, copy_to_clipboard=True)
+        )
+
+
+@app.command()
+def slowed_reverb(
+    youtube_link: Optional[str] = typer.Argument(
+        None, help="youtube link, optional if you have already downloaded"
+    ),
+    video_id: Optional[str] = typer.Option(
+        None, help="local video id if youtube_link is None (video downloaded before)"
+    ),
+    title: Optional[str] = None,
+    mode_level: SlowedReverbProcessMode = SlowedReverbProcessMode.Mid,
+    use_all_levels: bool = False,
+    run_once: bool = True,
+    upload: bool = False,
+):
+    import colouredlogs
+
+    colouredlogs.install(logging.DEBUG, reconfigure=False)
+
+    loop = asyncio.get_event_loop()
+    UPLOAD_FILE = upload
+    YOUTUBE_LINK = youtube_link or ""
+    ID, TITLE = (
+        video_id or "bCxtVoZJV2I",
+        title or "Jakuzi - 'Sana Göre Bir Şey Yok' (Official Audio)",
+    )
+
+    if not YOUTUBE_LINK:
+        if not ID:
+            raise RuntimeError("no youtube link or video id")
+
+    if YOUTUBE_LINK:
+        video = loop.run_until_complete(youtube_download(YOUTUBE_LINK))
+    else:
+        video = PartialYoutubeVideo(id=ID, title=TITLE)
+
+    if use_all_levels:
+        eq_range = {
+            0: (EQProcessMode.SlowedReverb, SlowedReverbProcessMode.Low),
+            1: (EQProcessMode.SlowedReverb, SlowedReverbProcessMode.Mid),
+            2: (EQProcessMode.SlowedReverb, SlowedReverbProcessMode.High),
+        }
+    else:
+        eq_range = {
+            0: (EQProcessMode.SlowedReverb, mode_level),
+        }
 
     eq = Equalizer.read_file(video)
     for idx, board_name in eq_range.items():
-        loop.run_until_complete(eq.run(board_name=board_name, run_once=False))
+        loop.run_until_complete(eq.run(board_name=board_name, run_once=run_once))
         loop.run_until_complete(eq.save_local(video, board_name))
         if UPLOAD_FILE:
-            loop.run_until_complete(upload_local(video, board_name=board_name))
+            loop.run_until_complete(
+                upload_local(video, board_name=board_name, copy_to_clipboard=True)
+            )
+
+
+if __name__ == "__main__":
+    app()
