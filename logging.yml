@@ -1,0 +1,58 @@
+version: 1
+
+formatters:
+    simple:
+        format: "%(name)s - %(levelname)s -  %(message)s"
+
+    complex:
+        format: "%(asctime)s - %(name)s - %(levelname)s %(lineno)d -  %(message)s"
+
+
+handlers:
+    console:
+        class: logging.StreamHandler
+        level: INFO
+        formatter: complex
+
+    file:
+        class: logging.handlers.TimedRotatingFileHandler
+        when: midnight
+        backupCount: 5
+        level: INFO
+        formatter: complex
+        filename : logs/logging.log
+
+    extendedfile:
+        class: logging.handlers.TimedRotatingFileHandler
+        encoding: UTF-8
+        when: midnight
+        backupCount: 5
+        level: DEBUG
+        formatter: complex
+        filename : logs/extendedlogging.log
+
+loggers:
+    __main__:
+        level: DEBUG
+        handlers: [file,extendedfile]
+        propagate: yes
+
+    pypedal:
+        level: DEBUG
+        handlers: [file,extendedfile]
+        propagate: yes
+
+    uvicorn:
+        level: DEBUG
+        handlers: [file,extendedfile]
+        propagate: yes
+
+    ytdl:
+        level: DEBUG
+        handlers: [file,extendedfile]
+        propagate: yes
+
+    pysndfx:
+        level: DEBUG
+        handlers: [file,extendedfile]
+        propagate: yes

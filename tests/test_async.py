@@ -59,12 +59,11 @@ async def test_download(file_options, youtube_videos: List[PartialYoutubeVideo])
         assert video.id == youtube_videos[idx].id  # same as above
         assert video.title == youtube_videos[idx].title
         assert video.file_name == youtube_videos[idx].file_name
+        assert video.safe_title == video.file_name.rsplit(f"-{video.id}", 1)[0]
 
 
 async def test_processing(file_options, youtube_videos: List[PartialYoutubeVideo]):
-    eq_list = [
-        Equalizer.read_file(youtube_video) for youtube_video in youtube_videos
-    ]
+    eq_list = [Equalizer.read_file(youtube_video) for youtube_video in youtube_videos]
 
     futures = [eq.run(board_name=DEFAULT_BOARD) for eq in eq_list]
     await asyncio.gather(*futures)
@@ -96,3 +95,16 @@ async def test_upload(file_options, youtube_videos: List[PartialYoutubeVideo]):
     for idx, link in enumerate(links):
         assert futures[idx].done()
         assert quote(youtube_videos[idx].title) in link
+
+
+async def test_cancel(file_options):
+    future = youtube_download("https://www.youtube.com/watch?v=U5QKIISDaCg")
+
+    async def run():
+        await future
+
+    task = asyncio.create_task(run())
+    await asyncio.sleep(0)  # wait for the task to start
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        future.result()

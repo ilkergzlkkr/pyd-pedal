@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
 [tool.setuptools.packages.find]
 include = ["pypedal*"]
 # exclude = ["pypedal.tests*"]
@@ -14,7 +18,12 @@ dependencies = [
   'fastapi',
   'uvicorn[standard]',
   'colouredlogs',
+  'typer[all]',
+  'pysndfx',
 ]
+
+[project.scripts]
+pypedal = "pypedal.pedal.equalizer:app"
 
 [project.optional-dependencies]
 tests = [
@@ -23,6 +32,8 @@ tests = [
 ]
 dev = [
   'black',
+  'PySoundFile',
+  'tqdm',
 ]
 
 [tool.pytest.ini_options]

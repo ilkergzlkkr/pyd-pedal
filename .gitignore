@@ -65,3 +65,4 @@ venv.bak/
 ### CURRENT PROJECT ###
 temp/
 */assets/*
+logs/*

@@ -8,6 +8,7 @@ class PartialYoutubeVideo(BaseModel):
     title: str
     url: str = None  # type: ignore
     file_name: str = None  # type: ignore
+    safe_title: str = None  # type: ignore
     ext: str = "mp3"
 
     def __str__(self):
@@ -39,6 +40,16 @@ class PartialYoutubeVideo(BaseModel):
             return v
 
         return f"{values['title']}-{values['id']}"
+
+    @validator("safe_title", always=True)
+    def define_safe_title(cls, v, values):
+        if isinstance(v, str):
+            return v
+
+        return values["file_name"].rsplit(f"-{values['id']}", 1)[0]
+
+    class Config:
+        validate_assignment = True
 
 
 class YoutubeVideo(PartialYoutubeVideo):
