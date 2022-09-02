@@ -39,7 +39,7 @@ html = """
         <script>
             var client_id = Date.now()
             document.querySelector("#ws-id").textContent = client_id;
-            var ws = new WebSocket(`ws://{window.location.host}/ws`);
+            var ws = new WebSocket(`ws://${window.location.host}/ws`);
             ws.onmessage = function(event) {
                 var messages = document.getElementById('messages')
                 var item = document.createElement('li')

@@ -1,0 +1,9 @@
+youtube-dl
+pedalboard
+requests
+pyperclip
+fastapi
+uvicorn[standard]
+colouredlogs
+typer[all]
+pysndfx
