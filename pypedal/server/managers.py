@@ -303,11 +303,18 @@ class ConnectionManager:
     async def connect(self, ws: WebSocket):
         await ws.accept()
         self.active_connections.append(ws)
-        return self.active_connections.index(ws)
+        idx = self.active_connections.index(ws)
+        log.info(f"Client#{idx} connected")
+        return idx
 
     async def disconnect(self, ws: WebSocket):
         await ws.close(reason="disconnect")
-        self.active_connections.remove(ws)
+        await self.cleanup(ws)
+
+    async def cleanup(self, ws):
+        idx = self.active_connections.index(ws)
+        self.active_connections.pop(idx)
+        log.info(f"Client#{idx} disconnected")
 
     async def disconnect_everyone(self):
         await asyncio.gather(

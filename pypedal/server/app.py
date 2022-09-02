@@ -81,7 +81,7 @@ async def websocket_endpoint(websocket: WebSocket):
         except (ValidationError, json.JSONDecodeError) as e:
             await manager.internal_error(websocket, str(e), 2)
         except WebSocketDisconnect:
-            return await manager.disconnect(websocket)
+            return await manager.cleanup(websocket)
 
 
 # @app.websocket("/")
