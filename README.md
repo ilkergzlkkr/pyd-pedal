@@ -1,4 +1,4 @@
-# Pyd-Pedal
+# pypedal
 
 ## Install and run
 

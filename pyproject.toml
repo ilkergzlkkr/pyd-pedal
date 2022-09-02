@@ -7,7 +7,7 @@ include = ["pypedal*"]
 # exclude = ["pypedal.tests*"]
 
 [project]
-name = 'pyd-pedal'
+name = 'pypedal'
 version = '1.0.0'
 requires-python = '>=3.8'
 dependencies = [
