@@ -2,7 +2,7 @@
 
 ## Install and run
 
-use
+use docker or
 
 ```sh
 pip install .
