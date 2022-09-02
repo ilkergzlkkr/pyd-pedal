@@ -1,0 +1,4 @@
+{
+  "builds": [{ "src": "pypedal/main.py", "use": "@vercel/python" }],
+  "routes": [{ "src": "/(.*)", "dest": "pypedal/main.py" }]
+}

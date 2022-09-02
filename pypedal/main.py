@@ -6,16 +6,20 @@ import colouredlogs
 import dotenv
 import os
 import yaml
+import uvicorn
 
-from .pedal import options
-from .server import app
+from pypedal.pedal import options
+from pypedal.server import app
 
 uvicorn_log = logging.getLogger("uvicorn")
-del uvicorn_log.handlers[0]
+try:
+    uvicorn_log.handlers[0]
+except IndexError:
+    pass
 
 dotenv.load_dotenv()
 colorama.init()
-colouredlogs.install(stream=sys.stdout, reconfigure=False)
+colouredlogs.install()
 
 
 @app.on_event("startup")
@@ -26,3 +30,7 @@ async def setup():
 
     os.makedirs("logs", exist_ok=True)
     logging.config.dictConfig(config)
+
+
+if __name__ == "__main__":
+    uvicorn.run("pypedal.main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
