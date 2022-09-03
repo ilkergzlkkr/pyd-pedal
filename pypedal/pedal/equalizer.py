@@ -313,7 +313,7 @@ def youtube_download(url: str, *, title_suffix: str = ""):
             file = path.name
             file_name, _extension = file.rsplit(".", 1)
             out.file_name = file_name  # safe filename from ydl
-            out.safe_title = file_name.rsplit("-", 1)[0]
+            out.safe_title = file_name.rsplit(f"-{out.id}", 1)[0]
             out.ext = ydl_opts["postprocessors"][0]["preferredcodec"]
             # ydl gives us "webm", "m4a" ext from info for some reason :/
 
@@ -373,7 +373,7 @@ def upload_local(
             )
 
     full_qualified_name = pathlib.Path(
-        f"./{options.PROCESSED_FOLDER}/{title}-{board_name[1]}.{extension}"
+        f"{options.PROCESSED_FOLDER}/{title}-{board_name[1]}.{extension}"
     )
 
     return upload_to_transferfilesh(full_qualified_name, clipboard=copy_to_clipboard)

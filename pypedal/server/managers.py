@@ -138,6 +138,8 @@ class ProcessManager:
         )
         sub = proc.sub[board_name]
         cm = ConnectionManager
+        # payload may be None bc of 2nd subproc
+        # may lead to error in silently
         payload = self.get_status(proc.url, board_name)
         assert payload
 
