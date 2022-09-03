@@ -22,6 +22,7 @@ from pypedal.pedal import PartialYoutubeVideo, YoutubeVideo
 
 class ProductionConfig(BaseModel):
     PRODUCTION_ENV: Literal["production", "closed-beta", "open-beta"] = os.getenv("PRODUCTION_ENV")  # type: ignore
+    PRODUCTION_KEY: Optional[str] = os.getenv("PRODUCTION_KEY")
 
     @validator("PRODUCTION_ENV", pre=True, always=True)
     def validate_production_env(cls, v):

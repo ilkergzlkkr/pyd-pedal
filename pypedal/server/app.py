@@ -2,9 +2,10 @@ from __future__ import annotations
 import json
 
 import logging
+from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Header
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import ValidationError
 
 from pypedal.pedal import (
@@ -71,7 +72,15 @@ async def get():
 
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(
+    websocket: WebSocket, authorization: Optional[str] = Header(None)
+):
+    config: models.ProductionConfig = websocket.app.extra["config"]
+    if config.PRODUCTION_KEY:
+        # check for authorization header
+        if config.PRODUCTION_KEY != authorization:
+            return await websocket.close(reason="Unauthorized", code=401)
+
     id = await manager.connect(websocket)
     while True:
         try:
@@ -84,74 +93,16 @@ async def websocket_endpoint(websocket: WebSocket):
             return await manager.cleanup(websocket)
 
 
-# @app.websocket("/")
-# async def eq_websocket(websocket: WebSocket, Authorization: str = Header(default="")):
-
-#     id = await manager.connect(websocket)
-#     try:
-#         while True:
-#             payload: Dict[str, Any] = await websocket.receive_json()
-#             data = WebsocketPayload(id=payload.pop("id", id), **payload)
-#             await manager.send_personal_message(f"You wrote: {data.message}", websocket)
-#             await manager.broadcast(
-#                 f"Client #{client_id} index #{data.id} says: {data.message}"
-#             )
-#     except WebSocketDisconnect:
-#         await manager.disconnect(websocket)
-#         await manager.broadcast(f"Client #{client_id} left the chat")
-
-
 @app.post("/youtube/download", response_model=models.STATUSSendPayload)
 async def download(data: models.INITRecievePayload):
-    # check if its already download(ing|ed)
-    # if data.url in manager.youtube_tasks:
-    #     status = manager.youtube_tasks[data.url].status
-    #     if status and status.percentage == 100:
-    #         return manager.youtube_tasks[data.url]
-    #     else:
-    #         # wait for the download asyncio.Event to be set
-    #         # and return the status
-    #         pass
-    payload = models.WebsocketRecievePayload(op="INIT", data=data)
-    models.WebsocketSendPayload(
-        op="STATUS", data=models.STATUSSendPayload(url=data.url, state="STARTED")
-    )
-    await youtube_download(payload.data.url)
-    # in parralel thread (download actually done in background)
-    # but we simulate it here
-    models.WebsocketSendPayload(
-        op="STATUS",
-        data=models.STATUSSendPayload(
-            url=data.url,
-            state="IN_PROGRESS",
-            status=models.EQStatus(stage="downloading"),
-        ),
-    )
-    # then the thread is done
-    status = models.WebsocketSendPayload(
-        op="STATUS",
-        data=models.STATUSSendPayload(
-            url=data.url,
-            state="IN_PROGRESS",
-            status=models.EQStatus(stage="downloading", percentage=100),
-        ),
-    )
-    # manager.youtube_tasks[id] = status.data
-    return status.data
+    return Response(content="HTTP NOT IMPLEMENTED", status_code=501)
 
 
 @app.post(f"/eqs/{EQProcessMode.SlowedReverb}")
 async def test_run_save(mode: SlowedReverbProcessMode, title: str, file_name: str):
-    # only require yt.id not file-name with title wtf
-    board_name = (EQProcessMode.SlowedReverb, mode)
-    eq = Equalizer.read_file(file_name=file_name)
-    await eq.run(board_name=board_name)
-    await eq.write_file(title=title, board_name=board_name)
-    return {"upload_ready": True, "title": title}
+    return Response(content="HTTP NOT IMPLEMENTED", status_code=501)
 
 
 @app.post("/youtube/upload")
 async def upload(mode: SlowedReverbProcessMode, title: str):
-    board_name = (EQProcessMode.SlowedReverb, mode)
-    link = await upload_local(title=title, board_name=board_name)
-    return {"link": link, "success": True}
+    return Response(content="HTTP NOT IMPLEMENTED", status_code=501)
