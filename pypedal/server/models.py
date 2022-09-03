@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import dataclasses
 from typing import (
     Generic,
@@ -17,6 +18,16 @@ from pydantic import BaseModel, validator, root_validator
 
 from pypedal import pedal
 from pypedal.pedal import PartialYoutubeVideo, YoutubeVideo
+
+
+class ProductionConfig(BaseModel):
+    PRODUCTION_ENV: Literal["production", "closed-beta", "open-beta"] = os.getenv("PRODUCTION_ENV")  # type: ignore
+
+    @validator("PRODUCTION_ENV", pre=True, always=True)
+    def validate_production_env(cls, v):
+        if v not in ["production", "closed-beta", "open-beta"]:
+            return "production"
+        return v
 
 
 class EQStatus(BaseModel):

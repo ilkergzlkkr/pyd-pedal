@@ -10,6 +10,7 @@ import uvicorn
 
 from pypedal.pedal import options
 from pypedal.server import app
+from pypedal.server.models import ProductionConfig
 
 uvicorn_log = logging.getLogger("uvicorn")
 try:
@@ -24,6 +25,8 @@ colouredlogs.install()
 
 @app.on_event("startup")
 async def setup():
+    app.extra["config"] = ProductionConfig()
+    uvicorn_log.info(f"started app with config={app.extra['config']}")
     options.__init__(os.getenv("TEMP_DIR", ""))
     with open("logging.yml", "rt") as f:
         config = yaml.safe_load(f.read())

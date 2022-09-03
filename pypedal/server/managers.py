@@ -77,6 +77,7 @@ class ProcessManager:
                 self.background_process(proc, board_name)
             )
             # process video and upload
+            # TODO: proc.background_task will fire sub.background_task
             sub.background_task = asyncio.create_task(
                 self.background_subprocess(proc, board_name)
             )
@@ -100,6 +101,8 @@ class ProcessManager:
         # process already exists, but not sub_process
         proc = self.processes[id]
         proc.sub[board_name] = sub = SubProcessModel(ws=[ws])
+        asyncio.create_task(self.background_process(proc, board_name))
+        # this will fire STARTED event
         fut = proc.downloading and proc.downloading.future
         if fut and fut.done():
             if fut.cancelled() or fut.exception():
@@ -138,16 +141,14 @@ class ProcessManager:
         )
         sub = proc.sub[board_name]
         cm = ConnectionManager
-        # payload may be None bc of 2nd subproc
-        # may lead to error in silently
-        payload = self.get_status(proc.url, board_name)
-        assert payload
 
         try:
             tries = 0
             while not proc.downloading:
+                if not proc.background_task or proc.background_task.done():
+                    raise Exception(f"something went wrong in {proc.background_task=}")
                 if tries > 3:
-                    raise Exception("background_process not initalized")
+                    raise Exception(f"{proc.background_task=} took so long")
                 await asyncio.sleep(0.1)
                 tries += 1
             if not proc.downloading.event.is_set():
@@ -158,13 +159,17 @@ class ProcessManager:
                     # parent process will send status update
                     return
             await proc.downloading.event.wait()
+            payload = self.get_status(proc.url, board_name)
+            assert payload
+            await asyncio.sleep(0)  # yield
             video = proc.downloading.future.result()
-            await asyncio.sleep(
-                0
-            )  # yield (parent process will send status update `done` before us)
             log.debug(f"got downloaded event for {video=}")
 
             async with sub.lock:
+                payload.state = "IN_PROGRESS"  #
+                # state could be STARTED bc of second sub_process task
+                # (download complete before, parent will skip),
+                # so setting it to IN_PROGRESS
                 payload.status = EQStatus(stage="processing")
                 await cm.broadcast_model(sub.ws, payload)
             eq = pedal.Equalizer.read_file(video)
@@ -222,6 +227,7 @@ class ProcessManager:
         log.debug(f"starting background process {proc.url=}, {board_name=}")
         sub = proc.sub[board_name]
         cm = ConnectionManager
+
         async with sub.lock:
             if payload := self.get_status(proc.url, board_name):
                 if payload.state == "DONE":
@@ -232,6 +238,12 @@ class ProcessManager:
                 state="STARTED",
             )
             await cm.broadcast_model(sub.ws, payload)
+
+        if proc.downloading:
+            # NOTE: that STARTED event will fire even if download already done before
+            return log.debug(
+                f"download already started or done {proc.url=}, {board_name=}"
+            )
 
         # async def send_status_with_interval(proc: ProcessModel, interval: int):
         #     while True:
