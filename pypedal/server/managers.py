@@ -328,6 +328,7 @@ class ConnectionManager:
     async def cleanup(self, ws):
         idx = self.active_connections.index(ws)
         self.active_connections.pop(idx)
+        # TODO: cancell process of ws
         log.info(f"Client#{idx} disconnected")
 
     async def disconnect_everyone(self):
@@ -338,6 +339,9 @@ class ConnectionManager:
     @staticmethod
     async def send_model(ws: WebSocket, model: BaseModel):
         """or send_payload idk"""
+        if ws not in ConnectionManager.active_connections:
+            return
+
         if isinstance(model, STATUSSendPayload):
             return await ws.send_json(
                 WebsocketSendPayload(op="STATUS", data=model).dict()
